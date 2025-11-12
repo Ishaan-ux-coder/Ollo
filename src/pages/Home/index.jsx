@@ -2,10 +2,12 @@
 import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../../components/Navbar';
+import { Copy, ClipboardCheck } from 'lucide-react';
 
 const HomePage = () => {
   const [roomCode, setRoomCode] = useState('');
   const navigate = useNavigate();
+  const [isCopied, setIsCopied] = useState(false);
 
   // For Official Meetings (ZegoCloud)
   const handleJoinOfficialRoom = useCallback(() => {
@@ -21,6 +23,18 @@ const HomePage = () => {
   const handleFindFriends = useCallback(() => {
     navigate('/friends');
   }, [navigate]);
+
+  const handleCopyCode = async () => {
+    if (!roomCode) return;
+    try {
+        await navigator.clipboard.writeText(roomCode);
+        setIsCopied(true);
+        // Reset the "Copied" icon after 2 seconds
+        setTimeout(() => setIsCopied(false), 2000);
+    } catch (err) {
+        console.error("Failed to copy text: ", err);
+    }
+  };
 
   return (
     <div className="min-h-screen w-full font-sans">
@@ -46,20 +60,43 @@ const HomePage = () => {
             </div>
             <div className="space-y-4">
                 <div className="flex space-x-2">
-                    <input
-                      type="text"
-                      value={roomCode}
-                      onChange={(e) => setRoomCode(e.target.value)}
-                      placeholder="Enter Meeting Code"
-                      className="w-full px-4 py-3 text-lg text-warm-text bg-white border-2 border-gray-200 rounded-lg focus:outline-none focus:ring-4 focus:ring-warm-primary focus:ring-opacity-50 transition"
-                    />
-                    <button
-                      onClick={handleJoinOfficialRoom}
-                      className="px-6 py-3 font-semibold text-white bg-warm-primary rounded-lg hover:bg-opacity-90 focus:outline-none focus:ring-4 focus:ring-warm-primary focus:ring-opacity-50 transition-transform transform hover:scale-105"
-                    >
-                      Join
-                    </button>
-                </div>
+            {/* Wrapper to position the icon */}
+            <div className="relative w-full">
+                <input
+                    type="text"
+                    value={roomCode}
+                    onChange={(e) => {
+                        setRoomCode(e.target.value);
+                        setIsCopied(false); // Resets icon on typing
+                    }}
+                    placeholder="Enter Meeting Code"
+                    // Adjust padding to make room for the icon
+                    className="w-full pl-4 pr-12 py-3 text-lg text-warm-text bg-white border-2 border-gray-200 rounded-lg focus:outline-none focus:ring-4 focus:ring-warm-primary focus:ring-opacity-50 transition"
+                />
+                {/* The new copy button */}
+                <button
+                    type="button" 
+                    onClick={handleCopyCode}
+                    disabled={!roomCode}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-warm-primary disabled:opacity-50"
+                    title="Copy code"
+                >
+                    {isCopied ? (
+                        <ClipboardCheck size={20} className="text-green-600" />
+                    ) : (
+                        <Copy size={20} />
+                    )}
+                </button>
+            </div>
+
+            {/* Your original Join button (unchanged) */}
+            <button
+                onClick={handleJoinOfficialRoom}
+                className="px-6 py-3 font-semibold text-white bg-warm-primary rounded-lg hover:bg-opacity-90 focus:outline-none focus:ring-4 focus:ring-warm-primary focus:ring-opacity-50 transition-transform transform hover:scale-105"
+            >
+                Join
+            </button>
+          </div>
             </div>
             <div className="flex items-center justify-center">
                 <div className="w-1/3 border-b border-gray-300"></div>

@@ -2,127 +2,279 @@ import React, { useState, useEffect } from 'react';
 import Navbar from '../../components/Navbar';
 import { useAuth } from '../../context/AuthContext';
 import { db } from '../../firebase';
-import { collection, query, where, onSnapshot, doc, updateDoc, arrayUnion, getDoc, deleteDoc } from 'firebase/firestore';
+import { 
+  collection, query, where, onSnapshot, doc, updateDoc, 
+  deleteDoc, getDocs, documentId, getDoc
+} from 'firebase/firestore';
+import { Check, X, Phone } from 'lucide-react';
+
+// --- PLACEHOLDER DATA (Unchanged) ---
+const placeholderRequests = [
+  { id: 'dummyReq1', fromUsername: 'CuriousUser', fromEmail: 'curious@example.com', profileImageUrl: 'https://i.pravatar.cc/150?img=21' },
+  { id: 'dummyReq2', fromUsername: 'NewFriend', fromEmail: 'new@example.com', profileImageUrl: null },
+];
+const placeholderFriends = [
+  { id: 'dummyFriend1', username: 'Longtime Pal', email: 'pal@example.com', profileImageUrl: 'https://i.pravatar.cc/150?img=23' },
+  { id: 'dummyFriend2', username: 'Gamer Tag', email: 'gamer@example.com', profileImageUrl: 'https://i.pravatar.cc/150?img=24' },
+  { id: 'dummyFriend3', username: 'Chatty Cathy', email: 'cathy@example.com', profileImageUrl: 'https://i.pravatar.cc/150?img=25' },
+];
+// --- END PLACEHOLDER DATA ---
 
 const FriendsPage = () => {
   const { currentUser } = useAuth();
-  const [requests, setRequests] = useState([]);
+  const [friendRequests, setFriendRequests] = useState([]);
   const [friends, setFriends] = useState([]);
+  const [loadingRequests, setLoadingRequests] = useState(true);
+  const [loadingFriends, setLoadingFriends] = useState(true);
 
-  // Fetch friend requests
+  // --- Combined useEffect for all friend/request logic ---
   useEffect(() => {
     if (!currentUser) return;
 
-    const requestsQuery = query(collection(db, 'friendRequests'), where('to', '==', currentUser.uid), where('status', '==', 'pending'));
-    
-    const unsubscribe = onSnapshot(requestsQuery, (snapshot) => {
-      const requestsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setRequests(requestsData);
-    });
+    // --- Part A: Function to update the "My Friends" list ---
+    const updateFriendsList = async () => {
+      setLoadingFriends(true);
+      try {
+        const q1 = query(
+          collection(db, "friendRequests"),
+          where("to", "==", currentUser.uid),
+          where("status", "==", "accepted")
+        );
+        const q2 = query(
+          collection(db, "friendRequests"),
+          where("from", "==", currentUser.uid),
+          where("status", "==", "accepted")
+        );
 
-    return () => unsubscribe();
-  }, [currentUser]);
+        const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+        const friendUIDs = new Set();
+        snap1.docs.forEach(doc => friendUIDs.add(doc.data().from));
+        snap2.docs.forEach(doc => friendUIDs.add(doc.data().to));
 
-  // Fetch friends list
-  useEffect(() => {
-    if (!currentUser) return;
+        const uidArray = Array.from(friendUIDs);
 
-    const userProfileRef = doc(db, 'userProfiles', currentUser.uid);
-
-    const unsubscribe = onSnapshot(userProfileRef, async (docSnap) => {
-      if (docSnap.exists() && docSnap.data().friends) {
-        const friendUIDs = docSnap.data().friends;
-        if (friendUIDs.length === 0) {
-            setFriends([]);
-            return;
+        if (uidArray.length > 0) {
+          const friendsQuery = query(
+            collection(db, "userProfiles"),
+            where(documentId(), "in", uidArray)
+          );
+          const friendsSnapshot = await getDocs(friendsQuery);
+          const friendsList = friendsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setFriends(friendsList);
+        } else {
+          setFriends([]);
         }
-        const friendPromises = friendUIDs.map(uid => getDoc(doc(db, 'userProfiles', uid)));
-        const friendDocs = await Promise.all(friendPromises);
-        const friendsData = friendDocs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setFriends(friendsData);
-      } else {
-        setFriends([]);
+      } catch (err) {
+        console.error("Error fetching friends list: ", err);
       }
+      setLoadingFriends(false);
+    };
+
+    // --- Part B: Listener for PENDING requests ---
+    const requestsQuery = query(
+      collection(db, "friendRequests"),
+      where("to", "==", currentUser.uid),
+      where("status", "==", "pending")
+    );
+    const unsubRequests = onSnapshot(requestsQuery, async (snapshot) => {
+      setLoadingRequests(true);
+      const requests = [];
+      for (const requestDoc of snapshot.docs) {
+        const requestData = requestDoc.data();
+        const userProfileRef = doc(db, "userProfiles", requestData.from);
+        const userProfileSnap = await getDoc(userProfileRef);
+        requests.push({
+          id: requestDoc.id,
+          ...requestData,
+          fromUsername: userProfileSnap.data()?.username || requestData.fromEmail,
+          profileImageUrl: userProfileSnap.data()?.profileImageUrl || null,
+        });
+      }
+      setFriendRequests(requests);
+      setLoadingRequests(false);
     });
 
-    return () => unsubscribe();
+    // --- Part C: Listener for ACCEPTED requests ---
+    const acceptedQueryTo = query(
+      collection(db, "friendRequests"),
+      where("to", "==", currentUser.uid),
+      where("status", "==", "accepted")
+    );
+    const acceptedQueryFrom = query(
+      collection(db, "friendRequests"),
+      where("from", "==", currentUser.uid),
+      where("status", "==", "accepted")
+    );
+    
+    const unsubAcceptedTo = onSnapshot(acceptedQueryTo, () => updateFriendsList());
+    const unsubAcceptedFrom = onSnapshot(acceptedQueryFrom, () => updateFriendsList());
+
+    // --- Part D: Initial Load ---
+    updateFriendsList();
+
+    // --- Part E: Cleanup ---
+    return () => {
+      unsubRequests();
+      unsubAcceptedTo();
+      unsubAcceptedFrom();
+    };
   }, [currentUser]);
 
-  const handleAcceptRequest = async (requestId, fromId) => {
+  // --- 3. Handle Accept Request ("Tick") (WITH LOGGING) ---
+  const handleAccept = async (request) => {
     if (!currentUser) return;
+    console.log("Accepting request...", request.id);
+    const requestRef = doc(db, "friendRequests", request.id);
     try {
-      await updateDoc(doc(db, 'friendRequests', requestId), { status: 'accepted' });
-
-      const currentUserProfileRef = doc(db, 'userProfiles', currentUser.uid);
-      const friendProfileRef = doc(db, 'userProfiles', fromId);
-
-      await updateDoc(currentUserProfileRef, { friends: arrayUnion(fromId) });
-      await updateDoc(friendProfileRef, { friends: arrayUnion(currentUser.uid) });
-      
-    } catch (error) {
-      console.error("Error accepting friend request: ", error);
+      await updateDoc(requestRef, { status: "accepted" });
+      console.log("Request accepted successfully in Firestore!");
+    } catch (err) {
+      console.error("Error accepting friend request: ", err);
+      alert(`Error accepting request: ${err.message}. Check console and Firestore Rules.`);
     }
   };
 
-  const handleDeclineRequest = async (requestId) => {
+  // --- 4. Handle Reject Request ("Cross") (WITH LOGGING) ---
+  const handleReject = async (request) => {
+    console.log("Rejecting request...", request.id);
+    const requestRef = doc(db, "friendRequests", request.id);
     try {
-      await deleteDoc(doc(db, 'friendRequests', requestId));
-    } catch (error) {
-      console.error("Error declining friend request: ", error);
+      await deleteDoc(requestRef);
+      console.log("Request rejected successfully in Firestore!");
+    } catch (err) {
+      console.error("Error rejecting friend request: ", err);
+      alert(`Error rejecting request: ${err.message}. Check console and Firestore Rules.`);
     }
   };
+
+  // --- 5. Determine which lists to display (Unchanged) ---
+  const displayRequests = friendRequests.length > 0 ? friendRequests : (loadingRequests ? [] : placeholderRequests);
+  const displayFriends = friends.length > 0 ? friends : (loadingFriends ? [] : placeholderFriends);
+  const isRequestPlaceholder = friendRequests.length === 0 && !loadingRequests;
+  const isFriendPlaceholder = friends.length === 0 && !loadingFriends;
 
   return (
     <div className="min-h-screen w-screen bg-gradient-to-br from-warm-bg-start to-warm-bg-end font-sans">
       <Navbar />
       <div className="pt-24 container mx-auto px-4">
-        {/* Friend Requests Section */}
         <div className="bg-warm-card rounded-lg shadow-xl p-6 mb-8">
-          <h1 className="text-3xl font-bold text-warm-text mb-4">Friend Requests</h1>
-          {requests.length > 0 ? (
-            <ul className="space-y-4">
-              {requests.map(req => (
-                <li key={req.id} className="flex items-center justify-between bg-gray-100 p-3 rounded-lg">
-                  <span className="text-gray-700">{req.fromEmail}</span>
-                  <div>
-                    <button onClick={() => handleAcceptRequest(req.id, req.from)} className="bg-green-500 text-white px-3 py-1 rounded-md mr-2 hover:bg-green-600">Accept</button>
-                    <button onClick={() => handleDeclineRequest(req.id)} className="bg-red-500 text-white px-3 py-1 rounded-md hover:bg-red-600">Decline</button>
-                  </div>
-                </li>
+          
+          {/* --- Friend Requests Section --- */}
+          <h2 className="text-2xl font-bold text-warm-text mb-4">Friend Requests</h2>
+          {loadingRequests ? (
+            <p className="text-gray-600">Loading requests...</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {displayRequests.length === 0 && !isRequestPlaceholder && (
+                <p className="text-gray-500 italic">No pending friend requests.</p>
+              )}
+              {displayRequests.map(req => (
+                <RequestCard 
+                  key={req.id} 
+                  request={req}
+                  onAccept={handleAccept}
+                  onReject={handleReject}
+                  isPlaceholder={isRequestPlaceholder}
+                />
               ))}
-            </ul>
-          ) : (
-            <p className="text-gray-600">You have no new friend requests.</p>
+            </div>
           )}
-        </div>
 
-        {/* Friends List Section */}
-        <div className="bg-warm-card rounded-lg shadow-xl p-6">
-          <h1 className="text-3xl font-bold text-warm-text mb-4">Your Friends</h1>
-          {friends.length > 0 ? (
-             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {friends.map(friend => (
-                    <div key={friend.id} className="bg-white rounded-lg shadow p-4 flex items-center space-x-4">
-                        {/* --- REPLACED IMAGE WITH AVATAR --- */}
-                        <div className="w-16 h-16 rounded-full bg-warm-secondary flex items-center justify-center">
-                            <span className="text-2xl font-bold text-warm-text">
-                                {(friend.username || friend.email || 'U').charAt(0).toUpperCase()}
-                            </span>
-                        </div>
-                        <div>
-                            <h3 className="text-lg font-bold text-warm-text">{friend.username || 'No username'}</h3>
-                            <p className="text-gray-500">{friend.email}</p>
-                        </div>
-                    </div>
-                ))}
-             </div>
+          {/* --- Divider --- */}
+          <div className="border-b border-gray-200 my-8"></div>
+
+          {/* --- My Friends Section --- */}
+          <h2 className="text-2xl font-bold text-warm-text mb-4">My Friends</h2>
+          {loadingFriends ? (
+            <p className="text-gray-600">Loading friends...</p>
           ) : (
-            <p className="text-gray-600">Your friends list is empty. Add some friends!</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {displayFriends.length === 0 && !isFriendPlaceholder && (
+                <p className="text-gray-500 italic">You haven't added any friends yet.</p>
+              )}
+              {displayFriends.map(friend => (
+                <FriendCard 
+                  key={friend.id} 
+                  friend={friend} 
+                  isPlaceholder={isFriendPlaceholder}
+                />
+              ))}
+            </div>
           )}
+
         </div>
       </div>
     </div>
   );
 };
+
+// --- Helper Card Components (Unchanged) ---
+
+const RequestCard = ({ request, onAccept, onReject, isPlaceholder }) => (
+  <div className="bg-white p-4 rounded-lg shadow-md flex items-center justify-between">
+    <div className="flex items-center space-x-3 overflow-hidden">
+      {request.profileImageUrl ? (
+        <img src={request.profileImageUrl} alt={request.fromUsername} className="w-12 h-12 rounded-full object-cover flex-shrink-0" />
+      ) : (
+        <div className="w-12 h-12 rounded-full bg-warm-secondary flex items-center justify-center flex-shrink-0">
+          <span className="text-xl font-bold text-warm-primary">
+            {(request.fromUsername || 'U').charAt(0).toUpperCase()}
+          </span>
+        </div>
+      )}
+      <div className="overflow-hidden">
+        <h3 className="text-lg font-semibold text-warm-text truncate">{request.fromUsername}</h3>
+        <p className="text-sm text-gray-500 truncate">{request.fromEmail}</p>
+      </div>
+    </div>
+    <div className="flex space-x-2 flex-shrink-0">
+      <button
+        onClick={() => onAccept(request)}
+        disabled={isPlaceholder}
+        className="p-2 rounded-full bg-green-100 text-green-600 hover:bg-green-200 disabled:opacity-50"
+        title="Accept"
+      >
+        <Check size={20} />
+      </button>
+      <button
+        onClick={() => onReject(request)}
+        disabled={isPlaceholder}
+        className="p-2 rounded-full bg-red-100 text-red-600 hover:bg-red-200 disabled:opacity-50"
+        title="Reject"
+      >
+        <X size={20} />
+      </button>
+    </div>
+  </div>
+);
+
+const FriendCard = ({ friend, isPlaceholder }) => (
+  <div className="bg-white p-4 rounded-lg shadow-md flex items-center justify-between">
+    <div className="flex items-center space-x-3 overflow-hidden">
+      {friend.profileImageUrl ? (
+        <img src={friend.profileImageUrl} alt={friend.username} className="w-12 h-12 rounded-full object-cover flex-shrink-0" />
+      ) : (
+        <div className="w-12 h-12 rounded-full bg-warm-secondary flex items-center justify-center flex-shrink-0">
+          <span className="text-xl font-bold text-warm-primary">
+            {(friend.username || 'U').charAt(0).toUpperCase()}
+          </span>
+        </div>
+      )}
+      <div className="overflow-hidden">
+        <h3 className="text-lg font-semibold text-warm-text truncate">{friend.username}</h3>
+        <p className="text-sm text-gray-500 truncate">{friend.email}</p>
+      </div>
+    </div>
+    <div className="flex space-x-2 flex-shrink-0">
+      <button
+        disabled={isPlaceholder}
+        className="p-2 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-50"
+        title="Call (Coming Soon)"
+      >
+        <Phone size={20} />
+      </button>
+    </div>
+  </div>
+);
 
 export default FriendsPage;

@@ -10,7 +10,7 @@ import RulesPage from './pages/RulesPage';
 
 import OfficialMeetingPage from './pages/OfficialMeetingPage'; // ZegoCloud Page
 import RandomVideoCallPage from './pages/RandomVideoCallPage'; // WebRTC Page
-
+import HistoryPage from './pages/History/HistoryPage'; // <-- IMPORT NEW PAGE
 
 
 function App() {
@@ -27,6 +27,7 @@ function App() {
       <Route path="/random/:roomId" element={<RandomVideoCallPage />} /> {/* Random Video Call */}
       <Route path="/faqs" element={<FaqsPage />} />
       <Route path="/rules" element={<RulesPage />} />
+      <Route path="/history" element={<HistoryPage />} /> {/* <-- ADD NEW ROUTE */}
     </Routes>
     
     </>
